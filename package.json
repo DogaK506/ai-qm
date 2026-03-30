@@ -1,0 +1,12 @@
+{
+  "name": "ai-test-maintenance",
+  "version": "1.0.0",
+  "description": "Playwright tests for playwright.dev based on the Get Started guide",
+  "scripts": {
+    "test": "playwright test",
+    "test:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "latest"
+  }
+}
