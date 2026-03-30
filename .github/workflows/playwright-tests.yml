@@ -17,6 +17,10 @@ jobs:
   playwright-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     env:
       CI: true
 
@@ -59,3 +63,96 @@ jobs:
         with:
           name: playwright-traces
           path: test-results/**/trace*.zip
+
+      # 8. Notify Microsoft Teams when the workflow fails
+      - name: Notify Teams on failure
+        if: failure()
+        run: |
+          curl -s -o /dev/null -w "%{http_code}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "text": "🚨 **Playwright Tests Failed**\n\n**PR:** ${{ github.event.pull_request.title }}\n**Author:** ${{ github.event.pull_request.user.login }}\n**Branch:** ${{ github.head_ref }}\n**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }' \
+            "${{ secrets.TEAMS_WEBHOOK_URL }}"
+
+      # 9. Fetch existing run history from gh-pages (main only)
+      - name: Fetch history from gh-pages
+        if: always() && github.ref == 'refs/heads/main'
+        run: |
+          git fetch origin gh-pages 2>/dev/null || true
+          if git show origin/gh-pages:history.json > /tmp/history.json 2>/dev/null; then
+            echo "History fetched"
+          else
+            echo "[]" > /tmp/history.json
+          fi
+
+      # 10. Append current run record to history.json and write into report dir (main only)
+      - name: Update history.json
+        if: always() && github.ref == 'refs/heads/main'
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+          const history = JSON.parse(fs.readFileSync('/tmp/history.json', 'utf8'));
+          history.push({
+            timestamp:  new Date().toISOString(),
+            runUrl:     `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            commitSha:  process.env.GITHUB_SHA,
+            ref:        process.env.GITHUB_REF,
+            conclusion: process.env.GITHUB_JOB_STATUS ?? 'unknown',
+          });
+          fs.mkdirSync('playwright-report', { recursive: true });
+          fs.writeFileSync('playwright-report/history.json', JSON.stringify(history, null, 2));
+          EOF
+        env:
+          GITHUB_JOB_STATUS: ${{ job.status }}
+
+      # 11. Upload playwright-report/ as the GitHub Pages artifact (main only)
+      - name: Upload Pages artifact
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: playwright-report/
+
+      # 12. Deploy to GitHub Pages (main only)
+      - name: Deploy to GitHub Pages
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/deploy-pages@v4
+
+  security-scan:
+    runs-on: ubuntu-latest
+    continue-on-error: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable --immutable-cache --check-cache
+
+      - name: Run dependency vulnerability scan
+        id: audit
+        run: |
+          yarn audit --level high --json > audit-report.json 2>&1 || true
+          echo "## Dependency Vulnerability Scan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          node - <<'EOF'
+          const fs = require('fs');
+          const lines = fs.readFileSync('audit-report.json', 'utf8').trim().split('\n');
+          const summary = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).find(o => o?.type === 'auditSummary');
+          const vulns = summary?.data?.vulnerabilities ?? {};
+          const high = (vulns.high ?? 0) + (vulns.critical ?? 0);
+          const rows = ['| Severity | Count |', '|----------|-------|'];
+          for (const [k, v] of Object.entries(vulns)) rows.push(`| ${k} | ${v} |`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, rows.join('\n') + '\n\n');
+          if (high > 0) {
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `> ❌ **${high} high/critical vulnerabilit${high === 1 ? 'y' : 'ies'} found — PR blocked.**\n`);
+            process.exit(1);
+          }
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, '> ✅ No high or critical vulnerabilities found.\n');
+          EOF
