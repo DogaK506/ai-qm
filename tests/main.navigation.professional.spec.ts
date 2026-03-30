@@ -31,9 +31,7 @@ test.describe('Main page navigation', { annotation: { type: 'requirement', descr
   // ── Routing: click → correct destination URL and h1 ───────────────────────
 
   test('TC-NAV-001a Docs link navigates to the Installation page', async () => {
-    // INTENTIONAL FAILURE – wrong URL pattern used to trigger artifact upload on CI
-    // TODO: revert /\/docs\/BROKEN\// back to /\/docs\/intro/ after pipeline is verified
-    await homePage.clickNavLinkAndVerify(homePage.docsLink, /\/docs\/BROKEN\//, 'Installation');
+    await homePage.clickNavLinkAndVerify(homePage.docsLink, /\/docs\/intro/, 'Installation');
   });
 
   test('TC-NAV-001b API link navigates to the Playwright Library API reference', async () => {
