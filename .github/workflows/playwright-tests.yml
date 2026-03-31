@@ -101,15 +101,6 @@ jobs:
             gh api "repos/${{ github.repository }}/actions/artifacts/$artifact_id" -X DELETE
           fi
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: playwright-report/
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-
       # 8. Notify Microsoft Teams when the workflow fails
       - name: Notify Teams on failure
         if: failure()
@@ -162,6 +153,7 @@ jobs:
       # 12. Deploy to GitHub Pages (main only)
       - name: Deploy to GitHub Pages
         if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: deployment
         uses: actions/deploy-pages@v4
 
   security-scan:
